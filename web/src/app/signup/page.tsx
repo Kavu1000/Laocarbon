@@ -4,13 +4,8 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState, type FormEvent } from "react";
 import { AuthShell, FormError, PasswordField, TextField } from "@/components/AuthShell";
-import { authErrorMessage, loadCurrentUser, safeNext, useAuth, type Role } from "@/lib/auth";
+import { authErrorMessage, loadCurrentUser, safeNext, useAuth } from "@/lib/auth";
 import { supabase } from "@/lib/supabase/client";
-
-const ROLE_OPTIONS: { value: Role; title: string; text: string }[] = [
-  { value: "buyer", title: "Buyer organisation", text: "Buy & offset credits and receive retirement certificates." },
-  { value: "forest_owner", title: "Forest owner / Developer", text: "Register projects, list credits and receive 87% of each sale." },
-];
 
 export default function SignupPage() {
   return (
@@ -37,7 +32,6 @@ function SignupForm() {
   const { user, setUser } = useAuth();
   const [f, setF] = useState({
     fullName: "", orgName: "", email: "", phone: "", password: "", confirm: "",
-    role: (params.get("role") === "forest_owner" ? "forest_owner" : "buyer") as Role,
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [error, setError] = useState<string>();
@@ -71,7 +65,7 @@ function SignupForm() {
       email: f.email.trim(),
       password: f.password,
       options: {
-        data: { full_name: f.fullName.trim(), org_name: f.orgName.trim(), role: f.role, phone: f.phone.trim() },
+        data: { full_name: f.fullName.trim(), org_name: f.orgName.trim(), phone: f.phone.trim() },
         emailRedirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(next)}`,
       },
     });
@@ -108,20 +102,6 @@ function SignupForm() {
   return (
     <AuthShell title="Register" subtitle="Create your organisation's LaoCarbon account.">
       <form method="post" onSubmit={submit} className="space-y-4" noValidate>
-        <fieldset>
-          <legend className="label">Account type</legend>
-          <div className="grid gap-2 sm:grid-cols-2">
-            {ROLE_OPTIONS.map((o) => (
-              <label key={o.value} className={`cursor-pointer rounded-md border p-3 ${f.role === o.value ? "border-brand bg-brand-soft/50 ring-1 ring-brand" : "border-line hover:bg-canvas"}`}>
-                <input type="radio" name="role" className="sr-only" checked={f.role === o.value} onChange={() => setF((x) => ({ ...x, role: o.value }))} />
-                <span className="block text-sm font-semibold">{o.title}</span>
-                <span className="mt-0.5 block text-xs text-muted">{o.text}</span>
-              </label>
-            ))}
-          </div>
-          <p className="mt-1.5 text-xs text-muted">Auditor accounts are issued by the LaoCarbon registry.</p>
-        </fieldset>
-
         <div className="grid gap-4 sm:grid-cols-2">
           <TextField id="fullName" label="Full name" autoComplete="name" value={f.fullName} onChange={set("fullName")} error={errors.fullName} />
           <TextField id="orgName" label="Organisation" autoComplete="organization" value={f.orgName} onChange={set("orgName")} error={errors.orgName} />

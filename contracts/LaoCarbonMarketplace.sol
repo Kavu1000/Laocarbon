@@ -180,6 +180,21 @@ contract LaoCarbonMarketplace is AccessControl, ReentrancyGuard {
         emit RevenueSplit(certificateId, ownerAmt, platformAmt, auditorAmt, governmentAmt);
     }
 
+    /// @notice Burns credits the caller holds (e.g. a forest owner offsetting its own emissions) and mints a
+    ///         soulbound certificate. Only the project's forest owner can retire against it, so certificates
+    ///         stay attributable to the project that issued the credits. Caller must approve `tons` first.
+    /// @dev Emits CarbonOffset with listingId 0 and totalPaid 0 so indexers treat it like any retirement.
+    function retire(uint256 projectId, uint256 tons) external nonReentrant returns (uint256 certificateId) {
+        if (tons == 0) revert ZeroAmount();
+        Project storage p = projects[projectId];
+        if (!p.registered) revert UnknownProject();
+        if (msg.sender != p.forestOwner) revert NotForestOwner();
+
+        carbonToken.burnFrom(msg.sender, tons);
+        certificateId = certificate.mint(msg.sender, projectId, tons, p.ipfsHash);
+        emit CarbonOffset(certificateId, msg.sender, projectId, 0, tons, 0, p.ipfsHash, block.timestamp);
+    }
+
     function _setWallets(address platformWallet_, address governmentWallet_) private {
         if (platformWallet_ == address(0) || governmentWallet_ == address(0)) revert ZeroAddress();
         platformWallet = platformWallet_;

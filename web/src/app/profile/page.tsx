@@ -16,6 +16,8 @@ import { errMessage, fmtDate, fmtTons, fmtUsd, shortAddr } from "@/lib/format";
 import { useOffsets, type Offset } from "@/lib/hooks";
 import { STATUS_LABEL, STATUS_TONE, useMyProjects, usePublicProjects } from "@/lib/projects";
 import { supabase } from "@/lib/supabase/client";
+import { History } from "@/components/profile/History";
+import { MyCredits } from "@/components/profile/MyCredits";
 
 export default function ProfilePage() {
   const router = useRouter();
@@ -37,7 +39,7 @@ export default function ProfilePage() {
             <span>{user.fullName}</span>
             <span aria-hidden>·</span>
             <span>{user.email}</span>
-            <Badge tone="green">{ROLE_LABEL[user.role]}</Badge>
+            {user.role === "auditor" && <Badge tone="green">{ROLE_LABEL.auditor}</Badge>}
             {user.kycStatus === "verified" && <Badge tone="green"><CheckIcon className="h-3 w-3" /> KYC verified</Badge>}
           </div>
           <div className="mt-1 text-xs text-muted">Member since {new Date(user.createdAt).toLocaleDateString("en-GB", { month: "long", year: "numeric" })}</div>
@@ -53,17 +55,81 @@ export default function ProfilePage() {
         </button>
       </div>
 
-      <div className="mt-6 grid gap-6 xl:grid-cols-[1fr_380px]">
-        <div className="min-w-0 space-y-6">
-          <ImpactSection user={user} />
-          <AccountForm user={user} />
-        </div>
-        <div className="space-y-6">
-          <KycCard user={user} />
-          <WalletCard user={user} />
-          <PasswordForm email={user.email} />
-        </div>
+      <ProfileTabs user={user} />
+    </div>
+  );
+}
+
+const TABS = [
+  { id: "overview", label: "Overview" },
+  { id: "credits", label: "My Credits" },
+  { id: "history", label: "History" },
+  { id: "account", label: "Account" },
+] as const;
+type TabId = (typeof TABS)[number]["id"];
+
+function ProfileTabs({ user }: { user: User }) {
+  const [tab, setTab] = useState<TabId>("overview");
+  const { address: connected } = useAccount();
+  // Linked wallet is the account's identity; fall back to the connected one so new users still see their data.
+  const wallet = (user.wallet ?? connected) as Address | undefined;
+
+  useEffect(() => {
+    const fromHash = () => {
+      const h = window.location.hash.slice(1);
+      if (TABS.some((t) => t.id === h)) setTab(h as TabId);
+    };
+    fromHash();
+    window.addEventListener("hashchange", fromHash);
+    return () => window.removeEventListener("hashchange", fromHash);
+  }, []);
+
+  const select = (id: TabId) => {
+    setTab(id);
+    history.replaceState(null, "", `#${id}`);
+  };
+
+  return (
+    <div className="mt-6">
+      <div role="tablist" className="flex gap-1 overflow-x-auto border-b border-line">
+        {TABS.map((t) => (
+          <button
+            key={t.id}
+            role="tab"
+            aria-selected={tab === t.id}
+            onClick={() => select(t.id)}
+            className={`-mb-px whitespace-nowrap border-b-2 px-4 py-2.5 text-sm font-medium ${tab === t.id ? "border-brand text-brand" : "border-transparent text-muted hover:text-ink"}`}
+          >
+            {t.label}
+          </button>
+        ))}
       </div>
+      <div className="mt-6">
+        {tab === "overview" && <ImpactSection user={user} wallet={wallet} />}
+        {tab === "credits" && (wallet ? <MyCredits wallet={wallet} /> : <NeedWallet />)}
+        {tab === "history" && (wallet ? <History wallet={wallet} /> : <NeedWallet />)}
+        {tab === "account" && (
+          <div className="grid gap-6 xl:grid-cols-[1fr_380px]">
+            <AccountForm user={user} />
+            <div className="space-y-6">
+              <KycCard user={user} />
+              <WalletCard user={user} />
+              <PasswordForm email={user.email} />
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function NeedWallet() {
+  const { openConnectModal } = useConnectModal();
+  return (
+    <div className="card p-8 text-center">
+      <p className="font-medium">Connect a wallet to see your carbon credits</p>
+      <p className="mt-1 text-sm text-muted">Then link it in the Account tab so it's tied to your organisation.</p>
+      <button className="btn-primary mt-4" onClick={openConnectModal}>Connect Wallet</button>
     </div>
   );
 }
@@ -113,10 +179,9 @@ function AvatarUpload({ user }: { user: User }) {
   );
 }
 
-function ImpactSection({ user }: { user: User }) {
+function ImpactSection({ user, wallet }: { user: User; wallet?: Address }) {
   const { data: publicProjects = [] } = usePublicProjects();
-  const { data: myProjects = [] } = useMyProjects(user.role === "forest_owner" ? user.id : undefined);
-  const wallet = (user.wallet ?? undefined) as Address | undefined;
+  const { data: myProjects = [] } = useMyProjects(user.id);
   const { data: offsets, isLoading } = useOffsets(wallet);
   const [viewing, setViewing] = useState<Offset>();
   const nameOf = (id: bigint | number) => publicProjects.find((p) => p.id === Number(id))?.name ?? `Project #${id}`;
@@ -138,7 +203,7 @@ function ImpactSection({ user }: { user: User }) {
 
       <div className="card mt-4 overflow-hidden">
         {!wallet ? (
-          <p className="p-6 text-sm text-muted">Link a wallet to show your certificates here.</p>
+          <p className="p-6 text-sm text-muted">Connect or link a wallet to show your certificates here.</p>
         ) : isLoading ? (
           <p className="p-6 text-sm text-muted">Loading certificates…</p>
         ) : list.length === 0 ? (
@@ -161,7 +226,7 @@ function ImpactSection({ user }: { user: User }) {
         )}
       </div>
 
-      {user.role === "forest_owner" && (
+      {(myProjects.length > 0 || user.role === "forest_owner") && (
         <div className="card mt-4 p-5">
           <div className="flex items-center justify-between gap-3">
             <h3 className="font-semibold">My Projects</h3>

@@ -2,6 +2,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { authConfigured } from "./auth";
+import type { Boundary } from "./geo";
 import { supabase } from "./supabase/client";
 
 export const PROJECT_TYPES = [
@@ -63,14 +64,15 @@ export type PublicProject = {
   status: ProjectStatus;
   ipfs_cid: string | null;
   document_types: string[];
+  lat: number | null;
+  lng: number | null;
+  boundary: Boundary | null;
 };
 
 /** Full row, readable by the project owner and auditors only. */
 export type ProjectRow = Omit<PublicProject, "document_types"> & {
   owner_id: string | null;
   village: string;
-  lat: number | null;
-  lng: number | null;
   contact_first: string;
   contact_last: string;
   contact_email: string;
@@ -163,4 +165,68 @@ export async function reviewProject(projectId: number, auditorId: string, status
 
 export function placeholderCid(id: number) {
   return `bafkreilaocarbon${id.toString().padStart(4, "0")}`;
+}
+
+// ---------------------------------------------------------------- verification
+
+export type VerificationMethod = "document_review" | "satellite_analysis" | "field_visit";
+export type VerificationResult = "passed" | "flagged" | "failed";
+export type VerificationEvent = {
+  id: number;
+  project_id: number;
+  method: VerificationMethod;
+  result: VerificationResult;
+  summary: string;
+  imagery_date: string | null;
+  evidence_url: string | null;
+  created_at: string;
+  auditor_name: string;
+  auditor_org: string;
+};
+
+export const METHOD_LABEL: Record<VerificationMethod, string> = {
+  document_review: "Document review",
+  satellite_analysis: "Satellite analysis",
+  field_visit: "Field visit",
+};
+
+export function useVerification(projectId?: number) {
+  return useQuery({
+    queryKey: ["verification", projectId],
+    enabled: authConfigured && projectId !== undefined,
+    queryFn: async () =>
+      unwrap<VerificationEvent[]>(
+        await supabase().from("public_verification_events").select("*").eq("project_id", projectId!).order("created_at", { ascending: false }),
+      ),
+  });
+}
+
+export async function recordVerification(e: {
+  projectId: number;
+  auditorId: string;
+  method: VerificationMethod;
+  result: VerificationResult;
+  summary: string;
+  imageryDate?: string;
+  evidenceUrl?: string;
+}) {
+  unwrap(
+    await supabase().from("verification_events").insert({
+      project_id: e.projectId,
+      auditor_id: e.auditorId,
+      method: e.method,
+      result: e.result,
+      summary: e.summary,
+      imagery_date: e.imageryDate || null,
+      evidence_url: e.evidenceUrl || null,
+    }),
+  );
+}
+
+export function usePublicProject(id: number) {
+  return useQuery({
+    queryKey: ["public-project", id],
+    enabled: authConfigured && Number.isFinite(id),
+    queryFn: async () => unwrap<PublicProject | null>(await supabase().from("public_projects").select("*").eq("id", id).maybeSingle()),
+  });
 }

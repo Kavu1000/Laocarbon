@@ -11,6 +11,15 @@ import { Badge } from "@/components/ui";
 import { shortAddr } from "@/lib/format";
 import { BOUNDARY_DOC, PROJECT_TYPES, PROVINCES, REQUIRED_DOCUMENTS, saveProject, uploadDocument, type ProjectInput, type ProjectRow } from "@/lib/projects";
 import { supabase } from "@/lib/supabase/client";
+import { areaHa, boundaryFromFile, center, fmtHa, pinFrom, type Boundary, type Position } from "@/lib/geo";
+import dynamic from "next/dynamic";
+
+const BoundaryEditor = dynamic(() => import("@/components/map/BoundaryEditor").then((m) => m.BoundaryEditor), {
+  ssr: false,
+  loading: () => <div className="h-[420px] animate-pulse rounded-lg bg-canvas" />,
+});
+
+const pinOf = (d: { lat: string; lng: string }): Position | null => (d.lat && d.lng ? pinFrom(d.lat, d.lng) : null);
 
 const STEPS = [
   { title: "Applicant Information", sub: "Your personal or organisation details" },
@@ -24,13 +33,14 @@ type Draft = {
   firstName: string; lastName: string; company: string; email: string; phone: string;
   name: string; type: string; description: string; areaHa: string; estimatedCredits: string; creditPeriod: string; standard: string;
   province: string; district: string; village: string; lat: string; lng: string; boundaryFile: string;
+  boundary: Boundary | null;
   documents: Record<string, string>;
 };
 
 const EMPTY: Draft = {
   firstName: "", lastName: "", company: "", email: "", phone: "",
   name: "", type: "", description: "", areaHa: "", estimatedCredits: "", creditPeriod: "", standard: "VCS",
-  province: "", district: "", village: "", lat: "", lng: "", boundaryFile: "",
+  province: "", district: "", village: "", lat: "", lng: "", boundaryFile: "", boundary: null,
   documents: {},
 };
 
@@ -53,6 +63,7 @@ function validate(step: number, d: Draft): Record<string, string> {
   }
   if (step === 2) {
     req("province"); req("district"); req("village");
+    if (!d.boundary && !(d.lat && d.lng)) e.map = "Draw the forest boundary, upload a GeoJSON/KML file, or at least drop a GPS pin";
     if (d.lat && !(Math.abs(Number(d.lat)) <= 90)) e.lat = "Invalid latitude";
     if (d.lng && !(Math.abs(Number(d.lng)) <= 180)) e.lng = "Invalid longitude";
   }
@@ -108,7 +119,7 @@ function RegisterProjectForm() {
           areaHa: row.area_ha?.toString() ?? "", estimatedCredits: row.estimated_credits?.toString() ?? "",
           creditPeriod: row.credit_period, standard: row.standard || "VCS", province: row.province, district: row.district,
           village: row.village, lat: row.lat?.toString() ?? "", lng: row.lng?.toString() ?? "",
-          boundaryFile: names[BOUNDARY_DOC] ?? "", documents: names,
+          boundaryFile: names[BOUNDARY_DOC] ?? "", documents: names, boundary: row.boundary ?? null,
         });
         return;
       }
@@ -150,6 +161,7 @@ function RegisterProjectForm() {
     province: d.province,
     district: d.district.trim(),
     village: d.village.trim(),
+    boundary: d.boundary,
     lat: d.lat ? Number(d.lat) : null,
     lng: d.lng ? Number(d.lng) : null,
     contact_first: d.firstName.trim(),
@@ -326,12 +338,49 @@ function RegisterProjectForm() {
               <Field label="Latitude" error={errors.lat}><input className="input" inputMode="decimal" value={d.lat} onChange={(e) => set("lat", e.target.value)} placeholder="e.g. 20.95" /></Field>
               <Field label="Longitude" error={errors.lng}><input className="input" inputMode="decimal" value={d.lng} onChange={(e) => set("lng", e.target.value)} placeholder="e.g. 101.40" /></Field>
               <div className="sm:col-span-2">
+                <span className="label">Forest boundary &amp; GPS pin <span className="text-danger">*</span></span>
+                <BoundaryEditor
+                  boundary={d.boundary}
+                  pin={pinOf(d)}
+                  onBoundary={(b) => {
+                    setD((x) => {
+                      const c = b && !(x.lat && x.lng) ? center(b) : null;
+                      return { ...x, boundary: b, ...(c && { lng: c[0].toFixed(6), lat: c[1].toFixed(6) }) };
+                    });
+                    setErrors((x) => ({ ...x, map: "" }));
+                  }}
+                  onPin={(p) => {
+                    setD((x) => ({ ...x, lng: p ? String(p[0]) : "", lat: p ? String(p[1]) : "" }));
+                    setErrors((x) => ({ ...x, map: "" }));
+                  }}
+                />
+                {errors.map && <p className="mt-1 text-xs text-danger">{errors.map}</p>}
+                {d.boundary && d.areaHa && Math.abs(areaHa(d.boundary) - Number(d.areaHa)) / Number(d.areaHa) > 0.1 && (
+                  <p className="mt-1 text-xs text-warn">
+                    Mapped area ({fmtHa(areaHa(d.boundary))}) differs from the declared land area ({d.areaHa} ha) by more than 10%.
+                  </p>
+                )}
+              </div>
+              <div className="sm:col-span-2">
                 <FileRow
-                  label="Project Boundary (GeoJSON or KML)"
-                  hint="Supports .geojson, .json, .kml (max 10 MB)"
+                  label="Or upload a boundary file (GeoJSON or KML)"
+                  hint="Supports .geojson, .json, .kml (max 10 MB) — shown on the map above"
                   accept=".geojson,.json,.kml"
                   value={d.boundaryFile}
-                  onChange={(file) => pickFile(BOUNDARY_DOC, file)}
+                  error={errors.boundaryFile}
+                  onChange={async (file) => {
+                    try {
+                      const b = await boundaryFromFile(file);
+                      pickFile(BOUNDARY_DOC, file);
+                      setD((x) => {
+                        const c = !(x.lat && x.lng) ? center(b) : null;
+                        return { ...x, boundary: b, ...(c && { lng: c[0].toFixed(6), lat: c[1].toFixed(6) }) };
+                      });
+                      setErrors((x) => ({ ...x, boundaryFile: "", map: "" }));
+                    } catch (err) {
+                      setErrors((x) => ({ ...x, boundaryFile: err instanceof Error ? err.message : "Could not read file" }));
+                    }
+                  }}
                 />
               </div>
             </div>
@@ -360,7 +409,7 @@ function RegisterProjectForm() {
             <div className="space-y-5 text-sm">
               <Review title="Applicant" onEdit={() => setStep(0)} rows={[["Name", `${d.firstName} ${d.lastName}`], ["Organisation", d.company || "—"], ["Email", d.email], ["Phone", `+856 ${d.phone}`]]} />
               <Review title="Project" onEdit={() => setStep(1)} rows={[["Name", d.name], ["Type", d.type], ["Area", `${d.areaHa} ha`], ["Estimated credits", `${d.estimatedCredits} tCO₂e`], ["Credit period", d.creditPeriod], ["Standard", d.standard]]} />
-              <Review title="Location" onEdit={() => setStep(2)} rows={[["Province", d.province], ["District", d.district], ["Village", d.village], ["Coordinates", d.lat && d.lng ? `${d.lat}, ${d.lng}` : "—"], ["Boundary", d.boundaryFile || "—"]]} />
+              <Review title="Location" onEdit={() => setStep(2)} rows={[["Province", d.province], ["District", d.district], ["Village", d.village], ["Coordinates", d.lat && d.lng ? `${d.lat}, ${d.lng}` : "—"], ["Boundary", d.boundary ? `${fmtHa(areaHa(d.boundary))} mapped${d.boundaryFile ? ` (${d.boundaryFile})` : ""}` : "—"]]} />
               <Review title="Documents" onEdit={() => setStep(3)} rows={REQUIRED_DOCUMENTS.map((doc) => [doc, d.documents[doc] || "Missing"])} />
               <div className="rounded-md border border-line bg-canvas p-4">
                 <div className="font-medium">Payout wallet</div>

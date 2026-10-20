@@ -12,10 +12,16 @@ import { carbonTokenAbi, marketplaceAbi, useContracts } from "@/lib/contracts";
 import { errMessage, fmtTons } from "@/lib/format";
 import { useAfterTx, useRegisteredProjects } from "@/lib/hooks";
 import {
-  BOUNDARY_DOC, documentUrl, placeholderCid, PROJECT_TYPES, PROVINCES, REQUIRED_DOCUMENTS, reviewProject, STATUS_LABEL, STATUS_TONE,
+  BOUNDARY_DOC, documentUrl, METHOD_LABEL, recordVerification, type VerificationMethod, type VerificationResult, placeholderCid, PROJECT_TYPES, PROVINCES, REQUIRED_DOCUMENTS, reviewProject, STATUS_LABEL, STATUS_TONE,
   useProjectDetail, useReviewQueue, type ProjectRow, type ProjectStatus,
 } from "@/lib/projects";
 import { supabase } from "@/lib/supabase/client";
+import { areaHa, fmtHa, pinFrom } from "@/lib/geo";
+import dynamic from "next/dynamic";
+
+const mapLoading = () => <div className="h-[340px] animate-pulse rounded-lg bg-canvas" />;
+const ProjectMap = dynamic(() => import("@/components/map/ProjectMap").then((m) => m.ProjectMap), { ssr: false, loading: mapLoading });
+const CompareSlider = dynamic(() => import("@/components/map/CompareSlider").then((m) => m.CompareSlider), { ssr: false, loading: mapLoading });
 
 const REGISTRAR_ROLE = keccak256(toHex("REGISTRAR_ROLE"));
 const MINTER_ROLE = keccak256(toHex("MINTER_ROLE"));
@@ -178,7 +184,7 @@ function ReviewPanel({ project: p, onChain, onClose }: { project: ProjectRow; on
 
   const issues = [
     ...REQUIRED_DOCUMENTS.filter((d) => !docByType.has(d)).map((d) => ({ text: `${d} is missing.`, level: "High" })),
-    ...(!docByType.has(BOUNDARY_DOC) && p.lat === null ? [{ text: "No project boundary or coordinates provided.", level: "Medium" }] : []),
+    ...(!docByType.has(BOUNDARY_DOC) && !pinFrom(p.lat, p.lng) ? [{ text: "No project boundary or coordinates provided.", level: "Medium" }] : []),
     ...(!p.payout_wallet && !onChain ? [{ text: "No payout wallet on file — set the forest owner wallet before approving.", level: "Medium" }] : []),
   ];
 
@@ -212,7 +218,7 @@ function ReviewPanel({ project: p, onChain, onClose }: { project: ProjectRow; on
                 ["Contact", [p.contact_email, p.contact_phone].filter(Boolean).join(" · ")],
                 ["Project Type", p.type],
                 ["Location", [p.village, p.district, p.province].filter(Boolean).join(", ")],
-                ["Coordinates", p.lat !== null && p.lng !== null ? `${p.lat}, ${p.lng}` : "—"],
+                ["Coordinates", pinFrom(p.lat, p.lng) ? `${p.lat}, ${p.lng}` : "—"],
                 ["Project Area", p.area_ha ? `${fmtTons(Number(p.area_ha))} ha` : "—"],
                 ["Estimated Credits", p.estimated_credits ? `${fmtTons(Number(p.estimated_credits))} tCO₂e` : "—"],
                 ["Credit Period", p.credit_period || "—"],
@@ -280,9 +286,26 @@ function ReviewPanel({ project: p, onChain, onClose }: { project: ProjectRow; on
             )}
           </div>
         </div>
+
+        <div className="mt-6">
+          <h3 className="font-semibold">Forest boundary</h3>
+          <p className="mb-2 text-sm text-muted">
+            {p.boundary ? `${fmtHa(areaHa(p.boundary))} mapped vs ${p.area_ha ? fmtHa(Number(p.area_ha)) : "—"} declared.` : "No boundary submitted — only a GPS pin, if any."}
+          </p>
+          <ProjectMap boundary={p.boundary} pin={pinFrom(p.lat, p.lng)} status="validation" className="h-[340px]" />
+          {p.boundary && (
+            <div className="mt-4">
+              <h3 className="font-semibold">Land-cover change</h3>
+              <CompareSlider boundary={p.boundary} status="validation" />
+            </div>
+          )}
+        </div>
       </div>
 
-      <DecisionPanel project={p} onChain={onChain} />
+      <div className="space-y-6">
+        <DecisionPanel project={p} onChain={onChain} />
+        <VerificationForm projectId={p.id} />
+      </div>
     </section>
   );
 }
@@ -373,6 +396,14 @@ function DecisionPanel({ project: p, onChain }: { project: ProjectRow; onChain?:
 
       setBusy("Recording decision (3/3)…");
       await reviewProject(p.id, user.id, "approved", `Approved — ${fmtTons(tons)} tCO₂e issued`, note.trim(), { payout_wallet: owner, ipfs_cid: cid });
+      await recordVerification({
+        projectId: p.id,
+        auditorId: user.id,
+        method: "document_review",
+        result: "passed",
+        summary: `Project documents reviewed and approved; ${fmtTons(tons)} tCO₂e issued on-chain.`,
+      });
+      queryClient.invalidateQueries({ queryKey: ["verification", p.id] });
       await afterTx();
       refresh();
     } catch (e) {
@@ -434,6 +465,88 @@ function DecisionPanel({ project: p, onChain }: { project: ProjectRow; onChain?:
       {error && <div className="mt-3 rounded-md bg-danger-soft p-3 text-sm text-danger">{error}</div>}
       {done && <div className="mt-3 rounded-md bg-brand-soft p-3 text-sm text-brand">{done}</div>}
       <button className="btn-primary mt-3 w-full" disabled={disabled} onClick={submit}>{busy ?? "Submit Decision"}</button>
+    </div>
+  );
+}
+
+function VerificationForm({ projectId }: { projectId: number }) {
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+  const { data: events = [] } = useQuery({
+    queryKey: ["verification", projectId, "all"],
+    queryFn: async () => {
+      const { data, error } = await supabase()
+        .from("verification_events")
+        .select("id, method, result, summary, created_at")
+        .eq("project_id", projectId)
+        .order("created_at", { ascending: false });
+      if (error) throw new Error(error.message);
+      return data as { id: number; method: VerificationMethod; result: VerificationResult; summary: string; created_at: string }[];
+    },
+  });
+  const [method, setMethod] = useState<VerificationMethod>("satellite_analysis");
+  const [result, setResult] = useState<VerificationResult>("passed");
+  const [summary, setSummary] = useState("");
+  const [imageryDate, setImageryDate] = useState("");
+  const [evidenceUrl, setEvidenceUrl] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string>();
+
+  const urlInvalid = !!evidenceUrl && !/^https?:\/\/\S+$/i.test(evidenceUrl);
+
+  async function submit() {
+    if (!user) return;
+    setBusy(true);
+    setError(undefined);
+    try {
+      await recordVerification({ projectId, auditorId: user.id, method, result, summary: summary.trim(), imageryDate, evidenceUrl: evidenceUrl.trim() });
+      setSummary("");
+      setImageryDate("");
+      setEvidenceUrl("");
+      queryClient.invalidateQueries({ queryKey: ["verification", projectId] });
+    } catch (e) {
+      setError(errMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="card p-5">
+      <h3 className="font-semibold">Record Verification</h3>
+      <p className="mt-1 text-xs text-muted">Shown publicly on the project page so buyers can see what was checked.</p>
+      <div className="mt-3 grid grid-cols-2 gap-2">
+        <select className="input" aria-label="Method" value={method} onChange={(e) => setMethod(e.target.value as VerificationMethod)}>
+          {(Object.keys(METHOD_LABEL) as VerificationMethod[]).map((m) => <option key={m} value={m}>{METHOD_LABEL[m]}</option>)}
+        </select>
+        <select className="input" aria-label="Result" value={result} onChange={(e) => setResult(e.target.value as VerificationResult)}>
+          <option value="passed">Passed</option>
+          <option value="flagged">Flagged</option>
+          <option value="failed">Failed</option>
+        </select>
+      </div>
+      <textarea className="input mt-2 min-h-20" maxLength={500} aria-label="Summary" value={summary} onChange={(e) => setSummary(e.target.value)} placeholder="What was checked and what you found…" />
+      {method === "satellite_analysis" && (
+        <label className="mt-2 block text-sm">
+          <span className="label">Imagery date</span>
+          <input type="date" className="input" value={imageryDate} onChange={(e) => setImageryDate(e.target.value)} />
+        </label>
+      )}
+      <input className={`input mt-2 ${urlInvalid ? "border-danger" : ""}`} aria-label="Evidence link" value={evidenceUrl} onChange={(e) => setEvidenceUrl(e.target.value)} placeholder="Evidence link (https://…) — optional" />
+      {error && <p className="mt-2 text-sm text-danger">{error}</p>}
+      <button className="btn-primary mt-3 w-full" disabled={busy || !summary.trim() || urlInvalid} onClick={submit}>{busy ? "Saving…" : "Add record"}</button>
+
+      {events.length > 0 && (
+        <ol className="mt-4 space-y-2 border-t border-line pt-3 text-sm">
+          {events.map((e) => (
+            <li key={e.id}>
+              <span className="font-medium">{METHOD_LABEL[e.method]}</span>{" "}
+              <Badge tone={e.result === "passed" ? "green" : e.result === "flagged" ? "amber" : "red"}>{e.result}</Badge>
+              <div className="text-xs text-muted">{new Date(e.created_at).toLocaleDateString("en-GB")} · {e.summary}</div>
+            </li>
+          ))}
+        </ol>
+      )}
     </div>
   );
 }

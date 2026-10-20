@@ -115,7 +115,7 @@ export function BuyOffsetModal({ listing, projectName, onClose }: { listing: Lis
           <div className="mt-4 break-all rounded-md bg-canvas p-3 text-left font-mono text-xs text-muted">tx {result.txHash}</div>
           <div className="mt-5 flex gap-3">
             <button className="btn-secondary flex-1" onClick={onClose}>Close</button>
-            <Link className="btn-primary flex-1" href="/portfolio">View certificate</Link>
+            <Link className="btn-primary flex-1" href="/profile#overview">View certificate</Link>
           </div>
         </div>
       </Modal>

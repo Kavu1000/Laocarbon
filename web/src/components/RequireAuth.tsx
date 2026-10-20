@@ -24,7 +24,7 @@ export function RequireAuth({ roles, children, reason }: { roles?: Role[]; child
     return (
       <Gate
         title="Not available for your account"
-        text={`This area is for ${roles.map((r) => ROLE_LABEL[r]).join(" / ")} accounts. You're signed in as ${ROLE_LABEL[user.role]}.`}
+        text={`This area is only for ${roles.map((r) => ROLE_LABEL[r]).join(" / ")} accounts.`}
       >
         <Link className="btn-secondary" href="/">Back to Marketplace</Link>
       </Gate>

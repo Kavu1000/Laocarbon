@@ -1,14 +1,17 @@
 "use client";
 
+import Link from "next/link";
 import { useMemo, useState } from "react";
 import { formatUnits } from "viem";
 import { BuyOffsetModal } from "@/components/BuyOffsetModal";
-import { BuildingIcon, CheckIcon, ClockIcon, DocIcon, FlameIcon, LeafIcon, PinIcon, SearchIcon } from "@/components/icons";
-import { Badge, Empty, ForestArt, Modal, StatCard } from "@/components/ui";
+import { CheckIcon, ClockIcon, DocIcon, FlameIcon, LeafIcon, PinIcon, SearchIcon } from "@/components/icons";
+import { Badge, Empty, ForestArt, StatCard } from "@/components/ui";
 import { USDT_DECIMALS } from "@/lib/contracts";
 import { fmtTons, fmtUsd } from "@/lib/format";
-import { useListings, useRegisteredProjects, useRetiredTotal, type Listing } from "@/lib/hooks";
-import { PROJECT_TYPES, PROVINCES, REQUIRED_DOCUMENTS, usePublicProjects, type PublicProject } from "@/lib/projects";
+import { useListings, useParticipants, useRegisteredProjects, useRetiredTotal, type Listing } from "@/lib/hooks";
+import type { Participant, ParticipantsResponse } from "@/lib/participants";
+import { WalletAvatar } from "@/components/WalletAvatar";
+import { PROJECT_TYPES, PROVINCES, usePublicProjects, type PublicProject } from "@/lib/projects";
 
 type Card = { key: string; project?: PublicProject; projectId: number; listing?: Listing; verified: boolean };
 type Sort = "newest" | "price-asc" | "price-desc" | "available";
@@ -18,6 +21,7 @@ export default function MarketplacePage() {
   const { listings, isLoading, ready } = useListings();
   const { data: registered } = useRegisteredProjects();
   const retired = useRetiredTotal();
+  const { data: participants } = useParticipants();
 
   const [query, setQuery] = useState("");
   const [province, setProvince] = useState("");
@@ -27,7 +31,6 @@ export default function MarketplacePage() {
   const [priceMax, setPriceMax] = useState("");
   const [creditsMin, setCreditsMin] = useState("");
   const [sort, setSort] = useState<Sort>("newest");
-  const [detail, setDetail] = useState<Card>();
   const [buying, setBuying] = useState<Card>();
 
   const cards = useMemo(() => {
@@ -177,23 +180,13 @@ export default function MarketplacePage() {
           ) : (
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 2xl:grid-cols-4 xl:grid-cols-3">
               {filtered.map((c) => (
-                <ProjectCard key={c.key} card={c} onDetails={() => setDetail(c)} onBuy={() => setBuying(c)} />
+                <ProjectCard key={c.key} card={c} people={participants} onBuy={() => setBuying(c)} />
               ))}
             </div>
           )}
         </div>
       </section>
 
-      {detail && (
-        <ProjectDetail
-          card={detail}
-          onClose={() => setDetail(undefined)}
-          onBuy={() => {
-            setBuying(detail);
-            setDetail(undefined);
-          }}
-        />
-      )}
       {buying?.listing && <BuyOffsetModal listing={buying.listing} projectName={buying.project?.name} onClose={() => setBuying(undefined)} />}
     </div>
   );
@@ -216,8 +209,10 @@ function StatusBadge({ verified }: { verified: boolean }) {
   );
 }
 
-function ProjectCard({ card, onDetails, onBuy }: { card: Card; onDetails: () => void; onBuy: () => void }) {
+function ProjectCard({ card, onBuy, people }: { card: Card; onBuy: () => void; people?: ParticipantsResponse }) {
   const p = card.project;
+  const sales = card.listing ? people?.listings[card.listing.listingId.toString()] : undefined;
+  const owner = people?.owners[card.projectId];
   return (
     <article className="card flex flex-col overflow-hidden">
       <div className="relative">
@@ -230,12 +225,11 @@ function ProjectCard({ card, onDetails, onBuy }: { card: Card; onDetails: () => 
         <span className="absolute bottom-2 left-2"><StatusBadge verified={card.verified} /></span>
       </div>
       <div className="flex flex-1 flex-col p-4">
-        <h3 className="font-semibold leading-snug">{p?.name ?? `Project #${card.projectId}`}</h3>
+        <h3 className="font-semibold leading-snug">
+          <Link href={`/projects/${card.projectId}`} className="hover:underline">{p?.name ?? `Project #${card.projectId}`}</Link>
+        </h3>
         {p && (
-          <div className="mt-2 space-y-1 text-sm text-muted">
-            <div className="flex items-center gap-1.5"><PinIcon className="h-3.5 w-3.5" /> {p.province}, Lao PDR</div>
-            <div className="flex items-center gap-1.5"><BuildingIcon className="h-3.5 w-3.5" /> {p.company}</div>
-          </div>
+          <div className="mt-2 flex items-center gap-1.5 text-sm text-muted"><PinIcon className="h-3.5 w-3.5" /> {p.province}, Lao PDR</div>
         )}
         <div className="mt-3 grid grid-cols-2 gap-2 border-t border-line pt-3 text-sm">
           <div>
@@ -247,9 +241,11 @@ function ProjectCard({ card, onDetails, onBuy }: { card: Card; onDetails: () => 
             <div className="font-semibold tabular-nums">{card.listing ? fmtUsd(card.listing.pricePerTon) : "—"}</div>
           </div>
         </div>
-        {p && <p className="mt-3 line-clamp-3 text-sm text-muted">{p.description}</p>}
+        {p && <p className="mt-3 line-clamp-2 text-sm text-muted">{p.description}</p>}
+        {card.listing && <Availability available={card.listing.available} retired={BigInt(sales?.retiredTons ?? 0)} />}
+        <People projectId={card.projectId} ownerFallback={p?.company} owner={owner} sales={sales} />
         <div className="mt-auto grid grid-cols-2 gap-2 pt-4">
-          <button className="btn-secondary" onClick={onDetails}>View Details</button>
+          <Link className="btn-secondary" href={`/projects/${card.projectId}`}>View Details</Link>
           <button className="btn-primary" onClick={onBuy} disabled={!card.listing}>
             {card.listing ? "Buy & Offset" : "Not listed"}
           </button>
@@ -259,52 +255,59 @@ function ProjectCard({ card, onDetails, onBuy }: { card: Card; onDetails: () => 
   );
 }
 
-function ProjectDetail({ card, onClose, onBuy }: { card: Card; onClose: () => void; onBuy: () => void }) {
-  const p = card.project;
+function Availability({ available, retired }: { available: bigint; retired: bigint }) {
+  const total = available + retired;
+  const pct = total > 0n ? Number((available * 1000n) / total) / 10 : 100;
   return (
-    <Modal open onClose={onClose} title={p?.name ?? `Project #${card.projectId}`} wide>
-      <ForestArt seed={card.projectId} className="h-40 w-full rounded-md" />
-      <div className="mt-4 flex flex-wrap items-center gap-3 text-sm text-muted">
-        <StatusBadge verified={card.verified} />
-        {p && <span className="flex items-center gap-1"><PinIcon className="h-3.5 w-3.5" /> {p.province}, Lao PDR</span>}
-        {p && <span className="flex items-center gap-1"><BuildingIcon className="h-3.5 w-3.5" /> {p.company}</span>}
+    <div className="mt-3" title={`${fmtTons(available)} of ${fmtTons(total)} tCO₂e still available`}>
+      <div className="flex justify-between text-xs">
+        <span className="font-medium text-brand">{pct}% available</span>
+        <span className="text-muted">{retired > 0n ? `${fmtTons(retired)} tCO₂e retired` : "None retired yet"}</span>
       </div>
-      {p && <p className="mt-3 text-sm leading-relaxed">{p.description}</p>}
-      <dl className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
-        {[
-          ["Available", card.listing ? `${fmtTons(card.listing.available)} tCO₂e` : "—"],
-          ["Price", card.listing ? `${fmtUsd(card.listing.pricePerTon)} / tCO₂e` : "—"],
-          ["Credit Period", p?.credit_period || "—"],
-          ["Standard", p?.standard || "—"],
-        ].map(([k, v]) => (
-          <div key={k} className="rounded-md border border-line p-3">
-            <dt className="text-xs text-muted">{k}</dt>
-            <dd className="mt-0.5 font-semibold">{v}</dd>
-          </div>
-        ))}
-      </dl>
-      {p && (
-        <div className="mt-4 grid gap-4 sm:grid-cols-2">
-          <div>
-            <h3 className="text-sm font-semibold">Project Type</h3>
-            <p className="text-sm text-muted">{p.type}</p>
-            <h3 className="mt-3 text-sm font-semibold">Co-benefits</h3>
-            <div className="mt-1 flex flex-wrap gap-1.5">{p.co_benefits.map((b) => <Badge key={b}>{b}</Badge>)}</div>
-          </div>
-          <div>
-            <h3 className="text-sm font-semibold">Key Documents</h3>
-            <ul className="mt-1 space-y-1 text-sm">
-              {REQUIRED_DOCUMENTS.filter((d) => p.document_types.includes(d)).map((d) => (
-                <li key={d} className="flex items-center gap-2 text-muted"><DocIcon className="h-4 w-4" /> {d}</li>
-              ))}
-            </ul>
-          </div>
+      <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-line" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100} aria-label="Credits still available">
+        <div className="h-full rounded-full bg-brand" style={{ width: `${pct}%` }} />
+      </div>
+    </div>
+  );
+}
+
+const shortWallet = (w: string) => `${w.slice(0, 6)}…${w.slice(-4)}`;
+
+function People({ projectId, owner, ownerFallback, sales }: {
+  projectId: number;
+  owner?: Participant;
+  ownerFallback?: string;
+  sales?: ParticipantsResponse["listings"][string];
+}) {
+  const ownerName = owner?.name ?? ownerFallback ?? (owner ? shortWallet(owner.wallet) : "—");
+  const buyers = sales?.buyers ?? [];
+  const extra = (sales?.buyerCount ?? 0) - Math.min(buyers.length, 4);
+  return (
+    <div className="mt-3 flex items-center justify-between gap-3 border-t border-line pt-3">
+      <div className="flex min-w-0 items-center gap-2" title={owner ? `Forest owner · ${owner.wallet}` : "Forest owner"}>
+        <WalletAvatar wallet={owner?.wallet ?? `0x${projectId.toString(16).padStart(6, "0")}`} name={ownerName} avatarUrl={owner?.avatarUrl} size={26} />
+        <div className="min-w-0 leading-tight">
+          <div className="text-[11px] text-muted">Owner</div>
+          <div className="truncate text-xs font-medium">{ownerName}</div>
         </div>
-      )}
-      <div className="mt-6 flex justify-end gap-3">
-        <button className="btn-secondary" onClick={onClose}>Close</button>
-        <button className="btn-primary" onClick={onBuy} disabled={!card.listing}>Buy & Offset Carbon</button>
       </div>
-    </Modal>
+      <div className="flex shrink-0 items-center gap-1.5">
+        {buyers.length > 0 && (
+          <div className="flex -space-x-2">
+            {buyers.slice(0, 4).map((b) => (
+              <span key={b.wallet} title={`${b.name ?? shortWallet(b.wallet)} · ${fmtTons(BigInt(b.tons))} tCO₂e retired`}>
+                <WalletAvatar wallet={b.wallet} name={b.name} avatarUrl={b.avatarUrl} size={24} className="ring-2 ring-white" />
+              </span>
+            ))}
+            {extra > 0 && (
+              <span className="grid h-6 w-6 place-items-center rounded-full bg-canvas text-[10px] font-semibold text-muted ring-2 ring-white">+{extra}</span>
+            )}
+          </div>
+        )}
+        <span className="text-xs text-muted">
+          {sales?.buyerCount ? `${sales.buyerCount} buyer${sales.buyerCount > 1 ? "s" : ""}` : "No buyers yet"}
+        </span>
+      </div>
+    </div>
   );
 }

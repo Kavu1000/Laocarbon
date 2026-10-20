@@ -137,6 +137,40 @@ describe("LaoCarbonMarketplace", () => {
       .to.changeTokenBalances(f.token, [f.owner, f.market], [LISTED - 100n, -(LISTED - 100n)]);
   });
 
+  describe("retire (burn held credits)", () => {
+    async function withHeldCredits() {
+      const f = await loadFixture(deploy);
+      await f.token.mint(f.owner, 500n);
+      return f;
+    }
+
+    it("burns from the holder, mints a certificate and emits CarbonOffset with listing 0", async () => {
+      const f = await withHeldCredits();
+      await f.token.connect(f.owner).approve(f.market, 200n);
+      const supply = await f.token.totalSupply();
+      await expect(f.market.connect(f.owner).retire(PROJECT_ID, 200n))
+        .to.emit(f.token, "Transfer").withArgs(f.owner.address, ethers.ZeroAddress, 200n)
+        .and.to.emit(f.market, "CarbonOffset");
+      expect(await f.token.balanceOf(f.owner)).to.equal(300n);
+      expect(await f.token.totalSupply()).to.equal(supply - 200n);
+      expect(await f.cert.ownerOf(1)).to.equal(f.owner.address);
+      const r = await f.cert.retirement(1);
+      expect(r.tons).to.equal(200n);
+      expect(r.projectId).to.equal(PROJECT_ID);
+    });
+
+    it("requires approval, a registered project, its forest owner and a non-zero amount", async () => {
+      const f = await withHeldCredits();
+      await expect(f.market.connect(f.owner).retire(PROJECT_ID, 10n)).to.be.revertedWithCustomError(f.token, "ERC20InsufficientAllowance");
+      await f.token.connect(f.owner).approve(f.market, 10n);
+      await expect(f.market.connect(f.owner).retire(99, 10n)).to.be.revertedWithCustomError(f.market, "UnknownProject");
+      await expect(f.market.connect(f.owner).retire(PROJECT_ID, 0)).to.be.revertedWithCustomError(f.market, "ZeroAmount");
+      await f.token.mint(f.other, 10n);
+      await f.token.connect(f.other).approve(f.market, 10n);
+      await expect(f.market.connect(f.other).retire(PROJECT_ID, 10n)).to.be.revertedWithCustomError(f.market, "NotForestOwner");
+    });
+  });
+
   it("restricts certificate minting to the marketplace", async () => {
     const f = await loadFixture(deploy);
     await expect(f.cert.connect(f.buyer).mint(f.buyer, 1, 1, IPFS))

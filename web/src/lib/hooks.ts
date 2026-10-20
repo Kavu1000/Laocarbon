@@ -3,6 +3,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { getAddress, type Address } from "viem";
 import { usePublicClient, useReadContract, useReadContracts } from "wagmi";
+import type { ParticipantsResponse } from "./participants";
 import { authConfigured } from "./auth";
 import { marketplaceAbi, useContracts } from "./contracts";
 import { supabase } from "./supabase/client";
@@ -190,6 +191,22 @@ export function useRetiredTotal() {
   });
   if (indexed) return totals.data ?? 0n;
   return (all.data ?? []).reduce((s, o) => s + o.tons, 0n);
+}
+
+/** Owner and buyer identities per listing for the marketplace cards (needs the Supabase index). */
+export function useParticipants() {
+  const c = useContracts();
+  const indexed = useIndexed(c.chainId);
+  return useQuery({
+    queryKey: ["participants", c.chainId],
+    enabled: indexed,
+    staleTime: 30_000,
+    queryFn: async (): Promise<ParticipantsResponse> => {
+      const res = await fetch(`/api/marketplace/participants?chainId=${c.chainId}`);
+      if (!res.ok) throw new Error(`participants ${res.status}`);
+      return res.json();
+    },
+  });
 }
 
 /** After a transaction: pull it into the index, then refresh every chain-derived query. */

@@ -30,7 +30,7 @@ const NAV = [
   { href: "/", label: "Marketplace" },
   { href: "/register", label: "Register Project" },
   { href: "/auditor", label: "Auditor" },
-  { href: "/portfolio", label: "Portfolio" },
+  { href: "/profile", label: "Profile" },
 ];
 
 export function Header() {

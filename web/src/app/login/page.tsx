@@ -26,6 +26,8 @@ function LoginForm() {
     params.get("error") === "confirm" ? "That confirmation link is invalid or has expired. Log in or register again." : undefined,
   );
   const [busy, setBusy] = useState(false);
+  const [unconfirmed, setUnconfirmed] = useState(false);
+  const [resent, setResent] = useState<string>();
 
   useEffect(() => {
     if (user) router.replace(next);
@@ -35,9 +37,11 @@ function LoginForm() {
     e.preventDefault();
     setBusy(true);
     setError(undefined);
+    setResent(undefined);
     const { error } = await supabase().auth.signInWithPassword({ email: email.trim(), password });
     if (error) {
       setBusy(false);
+      setUnconfirmed(/email not confirmed/i.test(error.message));
       setError(authErrorMessage(error.message));
       setPassword("");
       return;
@@ -46,12 +50,32 @@ function LoginForm() {
     router.replace(next);
   }
 
+  async function resend() {
+    const { error } = await supabase().auth.resend({
+      type: "signup",
+      email: email.trim(),
+      options: { emailRedirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(next)}` },
+    });
+    setResent(error ? authErrorMessage(error.message) : `Sent — check ${email.trim()} (and your spam folder), then click the link.`);
+  }
+
   return (
     <AuthShell title="Log in" subtitle="Welcome back. Log in to manage your projects, offsets and certificates.">
       <form method="post" onSubmit={submit} className="space-y-4" noValidate>
         <TextField id="email" label="Email address" type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@organisation.la" />
         <PasswordField id="password" label="Password" autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} />
         <FormError>{error}</FormError>
+        {unconfirmed && (
+          <div className="text-sm">
+            {resent ? (
+              <p className="rounded-md bg-brand-soft p-3 text-brand">{resent}</p>
+            ) : (
+              <button type="button" className="font-medium text-brand underline" onClick={resend}>
+                Resend confirmation email
+              </button>
+            )}
+          </div>
+        )}
         <button className="btn-primary w-full py-2.5" disabled={busy || !email || !password}>
           {busy ? "Logging in…" : "Log in"}
         </button>
