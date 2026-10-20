@@ -1,0 +1,40 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", "Noto Sans Lao", Roboto, sans-serif;
+  --color-brand: #1f4d3a;
+  --color-brand-hover: #173b2c;
+  --color-brand-soft: #e6efe9;
+  --color-ink: #1b1f1c;
+  --color-muted: #5d655f;
+  --color-line: #e2e5e2;
+  --color-canvas: #f6f7f5;
+  --color-warn: #a15c07;
+  --color-warn-soft: #fdf3e2;
+  --color-danger: #b42318;
+  --color-danger-soft: #fdecea;
+}
+
+body {
+  background: var(--color-canvas);
+  color: var(--color-ink);
+}
+
+@utility input {
+  @apply w-full rounded-md border border-line bg-white px-3 py-2 text-sm outline-none placeholder:text-muted/70 focus:border-brand focus:ring-2 focus:ring-brand/15 disabled:bg-canvas;
+}
+@utility label {
+  @apply mb-1 block text-sm font-medium text-ink;
+}
+@utility btn {
+  @apply inline-flex items-center justify-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-50;
+}
+@utility btn-primary {
+  @apply btn bg-brand text-white hover:bg-brand-hover;
+}
+@utility btn-secondary {
+  @apply btn border border-line bg-white text-ink hover:bg-canvas;
+}
+@utility card {
+  @apply rounded-lg border border-line bg-white;
+}
