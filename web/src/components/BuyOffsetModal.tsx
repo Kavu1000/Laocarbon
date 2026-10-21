@@ -4,11 +4,13 @@ import { useConnectModal } from "@rainbow-me/rainbowkit";
 import Link from "next/link";
 import { useState } from "react";
 import { parseEventLogs, parseUnits } from "viem";
-import { useAccount, usePublicClient, useReadContracts, useSwitchChain, useWriteContract } from "wagmi";
+import { useAccount, useBalance, usePublicClient, useReadContracts, useSwitchChain, useWriteContract } from "wagmi";
 import { marketplaceAbi, usdtAbi, useContracts, USDT_DECIMALS } from "@/lib/contracts";
 import { errMessage, fmtTons, fmtUsd, splitRevenue } from "@/lib/format";
 import { useAfterTx, type Listing } from "@/lib/hooks";
 import { defaultChain } from "@/lib/wagmi";
+
+const LOCAL_CHAIN_ID = 31337;
 import { CheckIcon, FlameIcon, ShieldIcon } from "./icons";
 import { Modal } from "./ui";
 
@@ -43,6 +45,10 @@ export function BuyOffsetModal({ listing, projectName, onClose }: { listing: Lis
   const allowance = reads?.[1].result ?? 0n;
   const needsApproval = allowance < cost;
 
+  const { data: eth, refetch: refetchEth } = useBalance({ address, chainId: c.chainId, query: { enabled: !!address } });
+  const [funding, setFunding] = useState(false);
+  const noGas = isConnected && c.ready && eth !== undefined && eth.value === 0n;
+
   const tooMany = tons > listing.available;
   const insufficient = isConnected && cost > balance;
   const busy = phase === "approving" || phase === "buying";
@@ -51,17 +57,26 @@ export function BuyOffsetModal({ listing, projectName, onClose }: { listing: Lis
   async function faucet() {
     if (!c.ready || !client || !address) return;
     setError(undefined);
+    setFunding(true);
     try {
-      const hash = await writeContractAsync({
-        address: c.usdt,
-        abi: usdtAbi,
-        functionName: "mint",
-        args: [address, parseUnits("10000", USDT_DECIMALS)],
-      });
-      await client.waitForTransactionReceipt({ hash });
-      await refetch();
+      if (c.chainId === LOCAL_CHAIN_ID) {
+        // Server-side faucet: works even when the wallet has no ETH to pay gas yet.
+        const res = await fetch("/api/dev/faucet", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ address }) });
+        if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? "Faucet failed");
+      } else {
+        const hash = await writeContractAsync({
+          address: c.usdt,
+          abi: usdtAbi,
+          functionName: "mint",
+          args: [address, parseUnits("10000", USDT_DECIMALS)],
+        });
+        await client.waitForTransactionReceipt({ hash });
+      }
+      await Promise.all([refetch(), refetchEth()]);
     } catch (e) {
       setError(errMessage(e));
+    } finally {
+      setFunding(false);
     }
   }
 
@@ -182,10 +197,14 @@ export function BuyOffsetModal({ listing, projectName, onClose }: { listing: Lis
         </ol>
       )}
 
-      {insufficient && c.ready && (
+      {(insufficient || noGas) && c.ready && (
         <div className="mt-4 rounded-md bg-warn-soft p-3 text-sm text-warn">
-          Your USDT balance is {fmtUsd(balance)}.{" "}
-          <button onClick={faucet} disabled={busy} className="font-medium underline">Get 10,000 test USDT</button>
+          {noGas
+            ? "Your wallet has no ETH to pay network (gas) fees, so MetaMask can't send transactions."
+            : `Your USDT balance is ${fmtUsd(balance)}.`}{" "}
+          <button onClick={faucet} disabled={busy || funding} className="font-medium underline">
+            {funding ? "Sending…" : c.chainId === LOCAL_CHAIN_ID ? "Get test ETH + 10,000 USDT" : "Get 10,000 test USDT"}
+          </button>
         </div>
       )}
       {error && <div className="mt-4 rounded-md bg-danger-soft p-3 text-sm text-danger">{error}</div>}
@@ -198,7 +217,7 @@ export function BuyOffsetModal({ listing, projectName, onClose }: { listing: Lis
             Switch to {defaultChain.name}
           </button>
         ) : (
-          <button className="btn-primary w-full py-3" disabled={busy || tons === 0n || tooMany || insufficient} onClick={submit}>
+          <button className="btn-primary w-full py-3" disabled={busy || tons === 0n || tooMany || insufficient || noGas} onClick={submit}>
             {phase === "approving" ? "Approving USDT…" : phase === "buying" ? "Offsetting…" : needsApproval ? "Approve & Buy" : "Buy & Offset"}
           </button>
         )}

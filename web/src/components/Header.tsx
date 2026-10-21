@@ -3,7 +3,10 @@
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { formatUnits } from "viem";
+import { useAccount, useReadContract } from "wagmi";
 import { useAuth } from "@/lib/auth";
+import { usdtAbi, useContracts, USDT_DECIMALS } from "@/lib/contracts";
 import { Avatar } from "./Avatar";
 import { LeafIcon } from "./icons";
 
@@ -26,15 +29,46 @@ function AccountLinks() {
   );
 }
 
-const NAV = [
+const usdFmt = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 });
+
+/** The buyer's spending money; ETH (gas) is shown by RainbowKit's ConnectButton next to it. */
+function UsdtBalance() {
+  const c = useContracts();
+  const { address, isConnected } = useAccount();
+  const { data } = useReadContract({
+    address: c.ready ? c.usdt : undefined,
+    abi: usdtAbi,
+    functionName: "balanceOf",
+    args: [address!],
+    chainId: c.chainId,
+    query: { enabled: c.ready && !!address, refetchInterval: 15_000 },
+  });
+  if (!isConnected || !c.ready || data === undefined) return null;
+  return (
+    <span
+      className="hidden items-center gap-1.5 rounded-xl bg-white px-3 py-2 text-sm font-bold shadow-[0_4px_12px_rgba(0,0,0,0.1)] sm:inline-flex"
+      title="USDT balance — used to buy carbon credits"
+    >
+      <span className="grid h-5 w-5 place-items-center rounded-full bg-[#26a17b] text-[11px] font-bold text-white">₮</span>
+      <span className="tabular-nums">{usdFmt.format(Number(formatUnits(data, USDT_DECIMALS)))}</span>
+      <span className="font-medium text-muted">USDT</span>
+    </span>
+  );
+}
+
+const NAV: { href: string; label: string; roles?: string[] }[] = [
   { href: "/", label: "Marketplace" },
+  { href: "/dashboard", label: "Dashboard" },
   { href: "/register", label: "Register Project" },
-  { href: "/auditor", label: "Auditor" },
   { href: "/profile", label: "Profile" },
+  { href: "/auditor", label: "Auditor", roles: ["auditor", "admin"] },
+  { href: "/admin", label: "Admin", roles: ["admin"] },
 ];
 
 export function Header() {
   const path = usePathname();
+  const { user } = useAuth();
+  const nav = NAV.filter((n) => !n.roles || (user && n.roles.includes(user.role)));
   return (
     <header className="sticky top-0 z-30 border-b border-line bg-white/95 backdrop-blur">
       <div className="mx-auto flex max-w-[1440px] flex-wrap items-center gap-x-8 gap-y-2 px-4 py-3 sm:px-6 lg:px-8">
@@ -46,7 +80,7 @@ export function Header() {
           </span>
         </Link>
         <nav className="order-3 -mx-1 flex w-full gap-1 overflow-x-auto md:order-none md:w-auto">
-          {NAV.map((n) => {
+          {nav.map((n) => {
             const active = n.href === "/" ? path === "/" : path.startsWith(n.href);
             return (
               <Link
@@ -63,7 +97,13 @@ export function Header() {
         </nav>
         <div className="ml-auto flex items-center gap-2">
           <AccountLinks />
-          <ConnectButton label="Connect Wallet" accountStatus="address" chainStatus="icon" showBalance={false} />
+          <UsdtBalance />
+          <ConnectButton
+            label="Connect Wallet"
+            accountStatus="address"
+            chainStatus="icon"
+            showBalance={{ smallScreen: false, largeScreen: true }}
+          />
         </div>
       </div>
     </header>

@@ -9,8 +9,8 @@ import { createClient } from "@supabase/supabase-js";
 const { values: a } = parseArgs({
   options: { email: { type: "string" }, name: { type: "string" }, org: { type: "string" }, role: { type: "string", default: "auditor" } },
 });
-if (!a.email || !a.name || !a.org || !["buyer", "forest_owner", "auditor"].includes(a.role)) {
-  console.error('Usage: npm run create-user -- --email a@b.la --name "Full Name" --org "Org" [--role auditor|buyer|forest_owner]');
+if (!a.email || !a.name || !a.org || !["buyer", "forest_owner", "auditor", "admin"].includes(a.role)) {
+  console.error('Usage: npm run create-user -- --email a@b.la --name "Full Name" --org "Org" [--role auditor|admin|buyer|forest_owner]');
   process.exit(1);
 }
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL;

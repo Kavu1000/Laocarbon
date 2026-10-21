@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 import { supabase } from "./supabase/client";
 
-export type Role = "buyer" | "forest_owner" | "auditor";
+export type Role = "buyer" | "forest_owner" | "auditor" | "admin";
 export type KycStatus = "not_submitted" | "pending" | "verified" | "rejected";
 
 export type User = {
@@ -19,23 +19,25 @@ export type User = {
   avatarUrl: string | null;
   wallet: string | null;
   kycStatus: KycStatus;
+  suspended: boolean;
   createdAt: string;
 };
 
 export type ProfileRow = {
   id: string; full_name: string; org_name: string; role: Role; phone: string; website: string; bio: string;
-  avatar_url: string | null; wallet: string | null; kyc_status: KycStatus; created_at: string;
+  avatar_url: string | null; wallet: string | null; kyc_status: KycStatus; suspended?: boolean; created_at: string;
 };
 
 export const toUser = (p: ProfileRow, email: string): User => ({
   id: p.id, email, fullName: p.full_name, orgName: p.org_name, role: p.role, phone: p.phone, website: p.website,
-  bio: p.bio, avatarUrl: p.avatar_url, wallet: p.wallet, kycStatus: p.kyc_status, createdAt: p.created_at,
+  bio: p.bio, avatarUrl: p.avatar_url, wallet: p.wallet, kycStatus: p.kyc_status, suspended: !!p.suspended, createdAt: p.created_at,
 });
 
 export const ROLE_LABEL: Record<Role, string> = {
   buyer: "Buyer organisation",
   forest_owner: "Forest owner / Project developer",
   auditor: "Auditor",
+  admin: "Administrator",
 };
 
 export const KYC_LABEL: Record<KycStatus, string> = {

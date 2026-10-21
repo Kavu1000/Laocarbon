@@ -29,7 +29,7 @@ const FILTER_STATUSES: ProjectStatus[] = ["pending_review", "in_validation", "ch
 
 export default function AuditorPage() {
   return (
-    <RequireAuth roles={["auditor"]} reason="The auditor dashboard is for LaoCarbon registry auditors.">
+    <RequireAuth roles={["auditor", "admin"]} reason="The auditor dashboard is for LaoCarbon registry auditors.">
       <AuditorDashboard />
     </RequireAuth>
   );
